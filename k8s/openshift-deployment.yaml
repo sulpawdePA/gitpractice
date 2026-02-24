@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: report-db-secret
+type: Opaque
+stringData:
+  username: reportuser
+  password: reportpass
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: report-db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: reportdb
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: report-db-secret
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: report-db-secret
+                  key: password
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: report-db-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: report-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: report-app
+  template:
+    metadata:
+      labels:
+        app: report-app
+    spec:
+      containers:
+        - name: report-app
+          image: "<your-registry>/report-app:latest"
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:postgresql://postgres:5432/reportdb"
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: report-db-secret
+                  key: username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: report-db-secret
+                  key: password
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: report-app
+spec:
+  selector:
+    app: report-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+
+---
+# OpenShift Route (optional)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: report-app
+spec:
+  to:
+    kind: Service
+    name: report-app
+  port:
+    targetPort: 80
